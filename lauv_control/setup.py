@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'lauv_gnc'
+package_name = 'lauv_control'
 
 setup(
     name=package_name,
