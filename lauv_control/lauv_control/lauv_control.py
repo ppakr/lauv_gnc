@@ -7,7 +7,6 @@ from copy import deepcopy
 
 from geometry_msgs.msg import TwistStamped, WrenchStamped, PoseStamped
 from nav_msgs.msg import Odometry
-from std_srvs.srv import SetBool
 
 from lauv_control.pid_controller import PIDController
 
@@ -56,7 +55,7 @@ class LAUVControl(Node):
         # --- PID set up ---
         self.config = {}
         # Position/Orientation Loop Gains
-        self._declare_pid_params("x", 1.5, 0.01, 0.1)  # Surge Position
+        self._declare_pid_params("x", 10, 0.01, 0.1)  # Surge Position
         self._declare_pid_params("z", 2.0, 0.05, 0.1)  # Depth
         self._declare_pid_params("theta", 3.0, 0.1, 0.5)  # Pitch
         self._declare_pid_params("psi", 1.5, 0.0, 0.2)  # Heading
@@ -83,27 +82,32 @@ class LAUVControl(Node):
         # Initialize PID values from params
         self.update_control_param()
 
+        self.get_logger().info("PID Controllers Initialized.")
+        # print pid gains
+        self.get_logger().info("Current PID Gains:")
+        for key in self.config:
+            self.get_logger().info(f"{key}: {self.config[key]}")
+
         # --- ROS 2 interfaces ---
         self.tau = WrenchStamped()
         self.nu_msg = TwistStamped()
 
+        # TODO: change topic names
         self.odom_sub = self.create_subscription(
-            Odometry, "gnc/odom_filtered", self.odom_callback, 10
+            Odometry, "/lauv/odometry", self.odom_callback, 10
         )
 
         self.cmd_pose_sub = self.create_subscription(
-            PoseStamped, "gnc/ref_trajectory_filtered", self.cmd_pose_callback, 10
-        )
-
-        self.control_switch_service = self.create_service(
-            SetBool, "control_switch", self.control_switch_callback
+            PoseStamped, "/lauv/ref_trajectory_filtered", self.cmd_pose_callback, 10
         )
 
         self.torque_pub = self.create_publisher(
-            WrenchStamped, "gnc/cmd_wrench/control", 10
+            WrenchStamped, "/lauv/wrench_command", 10
         )
 
         self.ref_vel_pub = self.create_publisher(TwistStamped, "gnc/cmd_vel", 10)
+
+        self.get_logger().info("ROS 2 Interfaces Set Up.")
 
         # Timing
         self.control_rate = 20.0  # Hz
@@ -111,7 +115,8 @@ class LAUVControl(Node):
         self.timer = self.create_timer(self.control_period, self.control_callback)
         self.time = self.get_clock().now().nanoseconds / 1e9
         self.prev_time = self.time
-        pass
+
+        self.get_logger().info("LAUV Cascade Controller Initialized.")
 
     # --- callbacks ---
 
@@ -307,12 +312,13 @@ class LAUVControl(Node):
             self.prev_time = self.time
             return
 
-        if self.odom_received and self.ref_trajectory_received and self.is_control_on:
-            self.position_control()
-            self.velocity_control()
+        # TODO: fix this when ref traject is implemented
+        # if self.odom_received and self.ref_trajectory_received:
+        self.position_control()
+        self.velocity_control()
 
-            self.ref_vel_pub.publish(self.nu_msg)
-            self.torque_pub.publish(self.tau)
+        # self.ref_vel_pub.publish(self.nu_msg)
+        self.torque_pub.publish(self.tau)
 
         self.prev_time = self.time
 
@@ -357,16 +363,6 @@ class LAUVControl(Node):
             self.config[parameter.name] = parameter.value
         self.update_control_param()
         return SetParametersResult(successful=True)
-
-    def control_switch_callback(self, request, response):
-        self.is_control_on = request.data
-        if not self.is_control_on:
-            self.reset_control()
-            response.message = "Control Disabled"
-        else:
-            response.message = "Control Enabled"
-        response.success = True
-        return response
 
     def reset_control(self):
         self.pid_x.reset_control()
