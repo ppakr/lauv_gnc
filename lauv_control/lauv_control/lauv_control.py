@@ -28,8 +28,30 @@ class LAUVControl(Node):
         self.odom_received = False
         self.is_control_on = True
 
-        # TODO: load mrb
         # --- Mass Matrix ---
+        mass = 18.0
+        Ixx = 2.6244
+        Iyy = 3.0618
+        Izz = 3.0618
+
+        X_dot_u = 1.0
+        Y_dot_v = 16.0
+        Z_dot_w = 16.0
+        K_dot_p = 0.005
+        M_dot_q = 1.3
+        N_dot_r = 1.3
+
+        _m_total = [
+            mass + X_dot_u,  # Surge (u)
+            mass + Y_dot_v,  # Sway  (v)
+            mass + Z_dot_w,  # Heave (w)
+            Ixx + K_dot_p,  # Roll  (p)
+            Iyy + M_dot_q,  # Pitch (q)
+            Izz + N_dot_r,  # Yaw   (r)
+        ]
+
+        # use only diagonal terms for simplicity
+        self.m_rb = np.diag(_m_total)
 
         # --- PID set up ---
         self.config = {}
