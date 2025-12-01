@@ -67,7 +67,7 @@ class LAUVControl(Node):
         self._declare_pid_params("r", 5.0, 0.5, 1.0)  # Yaw Rate
 
         # Callback for dynamic reconfigure
-        self.set_parameters_callback(self.callback_params)
+        self.add_on_set_parameters_callback(self.callback_params)
 
         # Outer Loop (Position -> Velocity/Angle)
         self.pid_x = PIDController(type="linear")
