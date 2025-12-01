@@ -53,18 +53,15 @@ class PIDController:
         """
 
         # calculating error
-
         self.err = desired - actual
 
         # check the type of input (linear or angular)
 
         # if linear, do nothing
-
         if self.type == "linear":
             pass
 
         # if angular, bound the output
-
         elif self.type == "angular":
             if self.err > np.pi:
                 self.err = self.err - (2.0 * np.pi)
@@ -72,7 +69,6 @@ class PIDController:
                 self.err = self.err + (2.0 * np.pi)
 
         # calculating dt
-
         self.t = t
         dt = self.t - self.prev_t
 
@@ -84,12 +80,16 @@ class PIDController:
         elif dt > 0.0:
 
             # calculate derivative error
-
             self.diff_err = (self.err - self.prev_err) / dt
 
-            # calucalte integral error
-
+            # calculate integral error
             self.int_err = self.int_err + ((self.err + self.prev_err) * dt / 2.0)
+
+            # integral windup guard
+            if self.int_err > self.sat:
+                self.int_err = self.sat
+            elif self.int_err < -self.sat:
+                self.int_err = -self.sat
 
         self.prev_t = deepcopy(self.t)
 
@@ -109,8 +109,13 @@ class PIDController:
         """
 
         # calculate PID
-
         self.PID = (self.k_p * err) + (self.k_i * int_err) + (self.k_d * diff_err)
+
+        # bound output
+        if self.PID > self.sat:
+            self.PID = self.sat
+        elif self.PID < -self.sat:
+            self.PID = -self.sat
 
         self.prev_err = deepcopy(self.err)
 
