@@ -71,8 +71,12 @@ class LAUVControl(Node):
         # Outer Loop (Position -> Velocity/Angle)
         self.pid_x = PIDController(type="linear")
         self.pid_z = PIDController(type="linear")  # Output: Desired Pitch (Theta)
-        self.pid_theta = PIDController(type="angular")  # Output: Desired Pitch Rate (q)
-        self.pid_psi = PIDController(type="angular")  # Output: Desired Yaw Rate (r)
+        self.pid_theta = PIDController(
+            type="angular", sat=0.5
+        )  # Output: Desired Pitch Rate (q)
+        self.pid_psi = PIDController(
+            type="angular", sat=0.5
+        )  # Output: Desired Yaw Rate (r)
 
         # Inner Loop (Velocity -> Force/Torque)
         self.pid_u = PIDController(type="linear")  # Output: Force X

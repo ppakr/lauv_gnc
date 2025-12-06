@@ -5,16 +5,19 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    # Get path to config
+    config = os.path.join(
+        get_package_share_directory("lauv_control"),
+        "config",
+        "lauv_control_params.yaml",
+    )
 
     control_node = Node(
         package="lauv_control",
         executable="lauv_control_node",
         name="lauv_controller",
         output="screen",
-        parameters=[
-            # You can override PID gains here if needed, or load a YAML file
-            # {'k_p_z': 2.5},
-        ],
+        parameters=[config],
     )
 
     allocator_node = Node(

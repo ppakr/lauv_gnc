@@ -1,0 +1,38 @@
+/lauv_controller:
+  ros__parameters:
+    # --- Inner Loop (Velocity Control) ---
+    # Surge Velocity (u)
+    k_p_u: 2.0
+    k_i_u: 0.0
+    k_d_u: 0.5
+
+    # Pitch Rate (q)
+    k_p_q: 5.0
+    k_i_q: 0.1
+    k_d_q: 1.0
+
+    # Yaw Rate (r)
+    k_p_r: 5.0
+    k_i_r: 0.1
+    k_d_r: 1.0
+
+    # --- Outer Loop (Position/Orientation Control) ---
+    # Surge Position (x) - Keeps constant speed behind the "carrot"
+    k_p_x: 0.2
+    k_i_x: 0.0
+    k_d_x: 0.0
+
+    # Depth Position (z) - Drives Pitch
+    k_p_z: 0.2
+    k_i_z: 0.0
+    k_d_z: 0.0
+
+    # Pitch Angle (theta) - Drives Pitch Rate
+    k_p_theta: 2.0
+    k_i_theta: 0.0
+    k_d_theta: 0.0
+
+    # Heading Angle (psi) - Drives Yaw Rate
+    k_p_psi: 1.0
+    k_i_psi: 0.0
+    k_d_psi: 0.0

@@ -203,7 +203,7 @@ class LOSGuidanceNode(Node):
     def publish_command(self, x, y, z, yaw):
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "map"
+        # msg.header.frame_id = "map"
 
         msg.pose.position.x = float(x)
         msg.pose.position.y = float(y)
