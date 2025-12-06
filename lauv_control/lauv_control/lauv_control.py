@@ -146,14 +146,6 @@ class LAUVControl(Node):
         # But commonly, Z is treated in world frame (depth is absolute),
         # while X/Y are relative to the vehicle heading.
 
-        # For simplicity, we store the raw Desired values:
-        self.eta_desired[0, 0] = (
-            0.0  # Typically X ref is handled by guidance/LOS giving desired velocity,
-        )
-        # but if doing station keeping:
-        # This part depends heavily on if 'pose' is a target point or current setpoint.
-        # Let's assume Trajectory Generator gives a 'moving target'
-
         # CRITICAL LAUV STRATEGY:
         # We don't transform desired Position to Body. We calculate World Error, then transform Error to Body.
         # So here we just store World Desired.
