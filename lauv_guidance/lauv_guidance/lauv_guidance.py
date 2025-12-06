@@ -119,18 +119,21 @@ class LOSGuidanceNode(Node):
 
         # --- Interfaces ---
         self.path_sub = self.create_subscription(
-            Path, "lauv/global_path", self.path_callback, 10
+            Path, "/lauv/global_path", self.path_callback, 10
         )
-
+        # TODO chage to odom_filtered when nav is implemented
+        # self.odom_sub = self.create_subscription(
+        #     Odometry, "lauv/odom_filtered", self.odom_callback, 10
+        # )
         self.odom_sub = self.create_subscription(
-            Odometry, "lauv/odom_filtered", self.odom_callback, 10
+            Odometry, "/lauv/odometry", self.odom_callback, 10
         )
 
         self.ref_pub = self.create_publisher(
-            PoseStamped, "lauv/ref_trajectory_filtered", 10
+            PoseStamped, "/lauv/ref_trajectory_filtered", 10
         )
 
-        self.los_pub = self.create_publisher(Point, "lauv/debug/los_point", 10)
+        self.los_pub = self.create_publisher(Point, "/lauv/debug/los_point", 10)
 
         # Run loop at 10Hz
         self.timer = self.create_timer(0.1, self.control_loop)
@@ -160,6 +163,12 @@ class LOSGuidanceNode(Node):
         self.guidance.radius = self.get_parameter("acceptance_radius").value
         target = self.get_parameter("virtual_target_distance").value
         def_depth = self.get_parameter("default_depth").value
+
+        # prinnt values
+        self.get_logger().info(
+            f"LOSGuidance Params - Lookahead: {self.guidance.delta}, Acceptance Radius: {self.guidance.radius}, Virtual Target Dist: {target}, Default Depth: {def_depth}",
+            throttle_duration_sec=10.0,
+        )
 
         # Run Guidance Law
         is_active = self.guidance.update_control_law()

@@ -92,7 +92,7 @@ class LAUVControl(Node):
         self.tau = WrenchStamped()
         self.nu_msg = TwistStamped()
 
-        # TODO: change topic names
+        # TODO: change topic name to odom_filtered when nav is implemented
         self.odom_sub = self.create_subscription(
             Odometry, "/lauv/odometry", self.odom_callback, 10
         )
@@ -105,7 +105,7 @@ class LAUVControl(Node):
             WrenchStamped, "/lauv/wrench_command", 10
         )
 
-        self.ref_vel_pub = self.create_publisher(TwistStamped, "gnc/cmd_vel", 10)
+        self.ref_vel_pub = self.create_publisher(TwistStamped, "/lauv/cmd_vel", 10)
 
         self.get_logger().info("ROS 2 Interfaces Set Up.")
 
