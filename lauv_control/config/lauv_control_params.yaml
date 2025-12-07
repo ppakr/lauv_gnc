@@ -17,7 +17,7 @@
     k_d_r: 1.0
 
     # --- Outer Loop (Position/Orientation Control) ---
-    # Surge Position (x) - Keeps constant speed behind the "carrot"
+    # Surge Position (x) - Keeps constant speed 
     k_p_x: 0.2
     k_i_x: 0.0
     k_d_x: 0.0
@@ -28,7 +28,7 @@
     k_d_z: 0.0
 
     # Pitch Angle (theta) - Drives Pitch Rate
-    k_p_theta: 2.0
+    k_p_theta: 1.0
     k_i_theta: 0.0
     k_d_theta: 0.0
 
