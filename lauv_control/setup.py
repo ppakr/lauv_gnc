@@ -25,7 +25,10 @@ setup(
         ],
     },
     entry_points={
-        "console_scripts": ["lauv_control_node = lauv_control.lauv_control:main"],
+        "console_scripts": [
+            "lauv_control_node = lauv_control.lauv_control:main",
+            "test_controller_node = lauv_control.lauv_control.test_controller:main",
+        ],
     },
     tests_require=["pytest"],
 )

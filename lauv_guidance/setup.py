@@ -22,7 +22,10 @@ setup(
         ],
     },
     entry_points={
-        "console_scripts": ["los_guidance_node = lauv_guidance.lauv_guidance:main"],
+        "console_scripts": [
+            "los_guidance_node = lauv_guidance.lauv_guidance:main",
+            "lm_path_node = lauv_guidance.lm_path:main",
+        ],
     },
     tests_require=["pytest"],
 )

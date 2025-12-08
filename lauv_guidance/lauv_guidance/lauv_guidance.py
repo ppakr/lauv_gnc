@@ -110,7 +110,7 @@ class LOSGuidanceNode(Node):
         self.declare_parameter("lookahead_distance", 5.0)
         self.declare_parameter("acceptance_radius", 2.0)
         self.declare_parameter("virtual_target_distance", 5.0)
-        self.declare_parameter("default_depth", 1.0)
+        self.declare_parameter("default_depth", -10.0)
 
         # --- Core Logic Instance ---
         delta = self.get_parameter("lookahead_distance").value

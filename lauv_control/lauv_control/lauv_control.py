@@ -310,8 +310,15 @@ class LAUVControl(Node):
 
         # TODO: fix this when ref traject is implemented
         # if self.odom_received and self.ref_trajectory_received:
-        self.position_control()
-        self.velocity_control()
+        if self.odom_received:
+            self.position_control()
+            self.velocity_control()
+
+        # --- DEBUG ---
+        # print desired tau
+        self.get_logger().info(
+            f"Desired Tau: Force=({self.tau.wrench.force.x:.2f}, {self.tau.wrench.force.y:.2f}, {self.tau.wrench.force.z:.2f}), Torque=({self.tau.wrench.torque.x:.2f}, {self.tau.wrench.torque.y:.2f}, {self.tau.wrench.torque.z:.2f})"
+        )
 
         # self.ref_vel_pub.publish(self.nu_msg)
         self.torque_pub.publish(self.tau)
