@@ -1,0 +1,6 @@
+/los_guidance_node:   
+  ros__parameters:                                                                                                                                                  
+    acceptance_radius: 1.0                                                                                                                                                 
+    default_depth: -4.0                                                                                                                                                    
+    lookahead_distance: 5.0                                                                                                                                          
+    target_vel: 1.0
