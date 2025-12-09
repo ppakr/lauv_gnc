@@ -9,12 +9,11 @@ from std_srvs.srv import Trigger
 class LawnMowerPathNode(Node):
     def __init__(self):
         super().__init__("lawn_mower_path_node")
-        self.get_logger().info("LawnMowerPath Node Initialized")
+        self.get_logger().info("LawnMowerPath Node Initialized (Horizontal Mode)")
 
         self.waypoints = []
 
         # --- set up ROS ---
-        # Note: Updated topic to match your Guidance Node's subscriber
         self.path_pub = self.create_publisher(Path, "lauv/global_path", 10)
 
         self.srv = self.create_service(
@@ -22,7 +21,6 @@ class LawnMowerPathNode(Node):
         )
 
         # Create a timer to publish the path periodically (1 Hz)
-        # This ensures the guidance node receives it even if it starts late.
         self.timer = self.create_timer(1.0, self.pub_global_path)
 
     def trigger_callback(self, request, response):
@@ -36,49 +34,53 @@ class LawnMowerPathNode(Node):
 
     def generate_lawn_mower(self, start_x, start_y, leg_length, spacing, num_legs):
         """
-        Generates a simple lawn mower path with Dubins U-turns.
+        Generates a HORIZONTAL lawn mower path (X-axis legs) with Dubins U-turns.
         """
         self.waypoints = []  # Reset waypoints
 
         # --- Generation Loop ---
         for i in range(num_legs):
-            # Calculate X for this leg
-            current_x = start_x + (i * spacing)
+            # Calculate Y for this leg (moves Up/North each leg)
+            current_y = start_y + (i * spacing)
 
             # Determine Direction
-            is_even = i % 2 == 0  # Even = UP, Odd = DOWN
+            is_even = i % 2 == 0  # Even = Right/East, Odd = Left/West
 
             if is_even:
-                # --- GOING UP (South -> North) ---
-                # Start of leg
+                # --- GOING RIGHT (West -> East) ---
+                # 1. Start of leg
                 if i == 0:
-                    self.waypoints.append((current_x, start_y))
+                    self.waypoints.append((start_x, current_y))
 
-                # Straight line to Top
-                self.waypoints.append((current_x, start_y + leg_length))
+                # 2. Straight line to Right End
+                self.waypoints.append((start_x + leg_length, current_y))
 
-                # U-Turn at Top (Right Turn / Clockwise)
+                # 3. U-Turn at Right End (Left Turn / CCW)
                 if i < num_legs - 1:
-                    center_x = current_x + (spacing / 2.0)
-                    center_y = start_y + leg_length
+                    center_x = start_x + leg_length
+                    center_y = current_y + (spacing / 2.0)
 
-                    # Arc: Starts at West point (pi), goes Clockwise to East point (0)
-                    # Curve is ABOVE the line (sin is positive)
-                    self.add_arc(center_x, center_y, np.pi, 0, spacing / 2.0)
+                    # Arc: Starts at Bottom (-pi/2), goes CCW to Top (pi/2)
+                    # Bulges to the East (Positive X)
+                    self.add_arc(
+                        center_x, center_y, -np.pi / 2, np.pi / 2, spacing / 2.0
+                    )
+
             else:
-                # --- GOING DOWN (North -> South) ---
-                # Straight line to Bottom
-                # (We are already at the top from the previous turn)
-                self.waypoints.append((current_x, start_y))
+                # --- GOING LEFT (East -> West) ---
+                # Straight line to Left End
+                self.waypoints.append((start_x, current_y))
 
-                # U-Turn at Bottom (Left Turn / Counter-Clockwise)
+                # U-Turn at Left End (Right Turn / CW)
                 if i < num_legs - 1:
-                    center_x = current_x + (spacing / 2.0)
-                    center_y = start_y
+                    center_x = start_x
+                    center_y = current_y + (spacing / 2.0)
 
-                    # Arc: Starts at West point (pi), goes Counter-Clockwise to East point (2pi)
-                    # Curve is BELOW the line (sin is negative)
-                    self.add_arc(center_x, center_y, np.pi, 2 * np.pi, spacing / 2.0)
+                    # Arc: Starts at Bottom (3pi/2), goes CW to Top (pi/2)
+                    # Bulges to the West (Negative X)
+                    self.add_arc(
+                        center_x, center_y, 3 * np.pi / 2, np.pi / 2, spacing / 2.0
+                    )
 
         self.get_logger().info(f"Generated Path with {len(self.waypoints)} waypoints.")
         return self.waypoints
@@ -103,8 +105,6 @@ class LawnMowerPathNode(Node):
             self.get_logger().warn("No waypoints generated yet!")
             return
 
-        # if service triggered
-
         msg = Path()
         # msg.header.frame_id = "map"  # Ensure this matches your localization/world frame
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -119,8 +119,6 @@ class LawnMowerPathNode(Node):
             # Orientation is not strictly needed for the path itself (LOS calculates it),
             # but we leave it as identity (0,0,0,1)
             pose.pose.orientation.w = 1.0
-
-            self.get_logger().info(f"Waypoint: x={wp[0]}, y={wp[1]}")
 
             msg.poses.append(pose)
 
@@ -144,11 +142,9 @@ def main(args=None):
     # --- Configuration ---
     start_x = 0.0
     start_y = 0.0
-    leg_length = 50.0
-    spacing = 5.0
+    leg_length = 50.0  # Horizontal length
+    spacing = 5.0  # Vertical step
     num_legs = 6
-    # Note: radius should ideally be spacing / 2 for perfect U-turns
-    radius = spacing / 2.0
 
     # --- Node Setup ---
     node = LawnMowerPathNode()

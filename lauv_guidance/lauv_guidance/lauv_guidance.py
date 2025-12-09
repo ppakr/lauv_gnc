@@ -54,32 +54,32 @@ class LOSGuidance:
         if not self.active or not self.path:
             return False
 
-        # 1. Waypoint Switching Logic
+        # Waypoint Switching Logic
         p_target = self.path[self.current_idx]
         dist_to_target = np.linalg.norm(p_target[0:2] - self.position[0:2])
 
-        if dist_to_target < self.radius:
-            if self.current_idx < len(self.path) - 1:
-                self.current_idx += 1
+        if dist_to_target < self.radius:  # acceptance radius
+            if self.current_idx < len(self.path) - 1:  # next waypoint avaliable
+                self.current_idx += 1  # set new target
             else:
                 self.active = False
                 return False  # Mission Finished
 
-        # 2. LOS Calculations (MSS crosstrackWpt & LOSchi logic)
+        # LOS Calculations (MSS crosstrackWpt & LOSchi logic)
         p_prev = self.path[self.current_idx - 1]
         p_curr = self.path[self.current_idx]
 
         # Path Tangential Angle (alpha_k / pi_p)
         pi_p = math.atan2(p_curr[1] - p_prev[1], p_curr[0] - p_prev[0])
 
-        # Cross-Track Error (e)
+        # Cross-Track Error (e) #in NED frame
         dx = self.position[0] - p_prev[0]
         dy = self.position[1] - p_prev[1]
 
-        # Rotate error into path frame
+        # Rotate error into path frame (y^p_e)
         self.cross_track_error = -dx * math.sin(pi_p) + dy * math.cos(pi_p)
 
-        # LOS Law: chi_d = pi_p - atan(e / Delta)
+        # LOS Law: chi_d = pi_p - atan(y^p_e / Delta)
         self.desired_heading = ssa(
             pi_p - math.atan(self.cross_track_error / self.delta)
         )
@@ -89,12 +89,13 @@ class LOSGuidance:
 
         return True
 
-    def get_surge_target(self, target_dist):
+    def get_surge_target(self, target_vel, d_t):
         """
         Calculates the target position for the position controller.
         """
-        x_des = self.position[0] + target_dist * math.cos(self.desired_heading)
-        y_des = self.position[1] + target_dist * math.sin(self.desired_heading)
+        # self.position is current auv position
+        x_des = self.position[0] + (target_vel * math.cos(self.desired_heading)) * d_t
+        y_des = self.position[1] + (target_vel * math.sin(self.desired_heading)) * d_t
         return x_des, y_des
 
 
@@ -108,9 +109,9 @@ class LOSGuidanceNode(Node):
 
         # --- ROS Parameters ---
         self.declare_parameter("lookahead_distance", 5.0)
-        self.declare_parameter("acceptance_radius", 2.0)
-        self.declare_parameter("virtual_target_distance", 5.0)
-        self.declare_parameter("default_depth", -10.0)
+        self.declare_parameter("acceptance_radius", 1.0)
+        self.declare_parameter("target_vel", 1.0)
+        self.declare_parameter("default_depth", -4.0)
 
         # --- Core Logic Instance ---
         delta = self.get_parameter("lookahead_distance").value
@@ -135,8 +136,10 @@ class LOSGuidanceNode(Node):
 
         self.los_pub = self.create_publisher(Point, "/lauv/debug/los_point", 10)
 
+        self.dt = 0.1
+
         # Run loop at 10Hz
-        self.timer = self.create_timer(0.1, self.control_loop)
+        self.timer = self.create_timer(self.dt, self.control_loop)
 
     def path_callback(self, msg):
         path_list = []
@@ -161,21 +164,21 @@ class LOSGuidanceNode(Node):
         # Update tuning params dynamically (optional, but good practice)
         self.guidance.delta = self.get_parameter("lookahead_distance").value
         self.guidance.radius = self.get_parameter("acceptance_radius").value
-        target = self.get_parameter("virtual_target_distance").value
+        target_vel = self.get_parameter("target_vel").value
         def_depth = self.get_parameter("default_depth").value
 
         # prinnt values
         self.get_logger().info(
-            f"LOSGuidance Params - Lookahead: {self.guidance.delta}, Acceptance Radius: {self.guidance.radius}, Virtual Target Dist: {target}, Default Depth: {def_depth}",
+            f"LOSGuidance Params - Lookahead: {self.guidance.delta}, Acceptance Radius: {self.guidance.radius}, Virtual Target Dist: {target_vel}, Default Depth: {def_depth}",
             throttle_duration_sec=10.0,
         )
 
-        # Run Guidance Law
+        # Run Guidance Law (Line-of-sight Guidance Law)
         is_active = self.guidance.update_control_law()
 
         if is_active:
             # Calculate Target Position for Surge
-            x_des, y_des = self.guidance.get_surge_target(target)
+            x_des, y_des = self.guidance.get_surge_target(target_vel, self.dt)
 
             # Handle Depth (if path has 0.0, use default)
             z_des = self.guidance.target_position[2]

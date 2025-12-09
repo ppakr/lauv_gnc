@@ -95,8 +95,13 @@ class TestLOSGuidanceCore:
         los.desired_heading = math.pi / 2  # Facing North
         los.position = np.array([10.0, 10.0, 0.0])
 
-        # Project 5m ahead
-        tx, ty = los.get_surge_target(target_dist=5.0)
+        # Config
+        target_vel = 1.0  # m/s
+        dt = 5.0  # seconds (Simulate 5s ahead)
+
+        # Expected displacement = vel * dt = 5.0m
+        # Project 5m ahead along heading (North)
+        tx, ty = los.get_surge_target(target_vel=target_vel, d_t=dt)
 
         # Should be at (10, 15) roughly
         assert tx == pytest.approx(10.0)
