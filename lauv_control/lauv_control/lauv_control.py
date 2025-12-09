@@ -7,6 +7,7 @@ from copy import deepcopy
 
 from geometry_msgs.msg import TwistStamped, WrenchStamped, PoseStamped
 from nav_msgs.msg import Odometry
+from std_srvs.srv import SetBool
 
 from lauv_control.pid_controller import PIDController
 
@@ -14,7 +15,7 @@ from lauv_control.pid_controller import PIDController
 class LAUVControl(Node):
     def __init__(self):
         super().__init__("lauv_controller")
-        self.get_logger().info("Initializing LAUV Cascade Controller...")
+        self.get_logger().info("Initializing LAUV Controller...")
 
         # --- State Variables ---
         self.eta_desired = np.zeros((6, 1))  # [x, y, z, phi, theta, psi]
@@ -28,6 +29,7 @@ class LAUVControl(Node):
         self.is_control_on = True
 
         # --- Mass Matrix ---
+        # (Using the diagonal terms from your previous code)
         mass = 18.0
         Ixx = 2.6244
         Iyy = 3.0618
@@ -49,54 +51,56 @@ class LAUVControl(Node):
             Izz + N_dot_r,  # Yaw   (r)
         ]
 
-        # use only diagonal terms for simplicity
         self.m_rb = np.diag(_m_total)
 
         # --- PID set up ---
         self.config = {}
+
         # Position/Orientation Loop Gains
-        self._declare_pid_params("x", 10, 0.01, 0.1)  # Surge Position
-        self._declare_pid_params("z", 2.0, 0.05, 0.1)  # Depth
-        self._declare_pid_params("theta", 3.0, 0.1, 0.5)  # Pitch
-        self._declare_pid_params("psi", 1.5, 0.0, 0.2)  # Heading
+        self._declare_pid_params("x", 0.2, 0.0, 0.0)  # Surge Position
+        self._declare_pid_params("y", 0.2, 0.0, 0.0)  # Sway Position (New)
+        self._declare_pid_params("z", 0.5, 0.01, 0.0)  # Depth Position
+        self._declare_pid_params("phi", 1.0, 0.0, 0.0)  # Roll Angle (New)
+        self._declare_pid_params("theta", 2.0, 0.0, 0.0)  # Pitch Angle
+        self._declare_pid_params("psi", 1.5, 0.0, 0.2)  # Heading Angle
 
         # Velocity Loop Gains
-        self._declare_pid_params("u", 4.0, 1.0, 0.5)  # Surge Velocity
+        self._declare_pid_params("u", 2.0, 0.5, 0.0)  # Surge Velocity
+        self._declare_pid_params("v", 2.0, 0.0, 0.0)  # Sway Velocity (New)
+        self._declare_pid_params("w", 2.0, 0.0, 0.0)  # Heave Velocity (New)
+        self._declare_pid_params("p", 2.0, 0.0, 0.0)  # Roll Rate (New)
         self._declare_pid_params("q", 5.0, 0.5, 1.0)  # Pitch Rate
         self._declare_pid_params("r", 5.0, 0.5, 1.0)  # Yaw Rate
 
         # Callback for dynamic reconfigure
         self.add_on_set_parameters_callback(self.callback_params)
 
-        # Outer Loop (Position -> Velocity/Angle)
+        # --- PID Instances (Full 6-DOF) ---
+        # Outer Loop (Position -> Velocity)
         self.pid_x = PIDController(type="linear")
-        self.pid_z = PIDController(type="linear")  # Output: Desired Pitch (Theta)
-        self.pid_theta = PIDController(
-            type="angular", sat=0.5
-        )  # Output: Desired Pitch Rate (q)
-        self.pid_psi = PIDController(
-            type="angular", sat=0.5
-        )  # Output: Desired Yaw Rate (r)
+        self.pid_y = PIDController(type="linear")  # New
+        self.pid_z = PIDController(type="linear")
+        self.pid_phi = PIDController(type="angular", sat=0.5)  # New
+        self.pid_theta = PIDController(type="angular", sat=0.5)
+        self.pid_psi = PIDController(type="angular", sat=0.5)
 
         # Inner Loop (Velocity -> Force/Torque)
-        self.pid_u = PIDController(type="linear")  # Output: Force X
-        self.pid_q = PIDController(type="linear")  # Output: Torque Y
-        self.pid_r = PIDController(type="linear")  # Output: Torque Z
+        self.pid_u = PIDController(type="linear")
+        self.pid_v = PIDController(type="linear")  # New
+        self.pid_w = PIDController(type="linear")  # New
+        self.pid_p = PIDController(type="linear")  # New
+        self.pid_q = PIDController(type="linear")
+        self.pid_r = PIDController(type="linear")
 
         # Initialize PID values from params
         self.update_control_param()
 
-        self.get_logger().info("PID Controllers Initialized.")
-        # print pid gains
-        self.get_logger().info("Current PID Gains:")
-        for key in self.config:
-            self.get_logger().info(f"{key}: {self.config[key]}")
+        self.get_logger().info("LAUV Controller Parameters Initialized.")
 
         # --- ROS 2 interfaces ---
         self.tau = WrenchStamped()
         self.nu_msg = TwistStamped()
 
-        # TODO: change topic name to odom_filtered when nav is implemented
         self.odom_sub = self.create_subscription(
             Odometry, "/lauv/odometry", self.odom_callback, 10
         )
@@ -111,8 +115,6 @@ class LAUVControl(Node):
 
         self.ref_vel_pub = self.create_publisher(TwistStamped, "/lauv/cmd_vel", 10)
 
-        self.get_logger().info("ROS 2 Interfaces Set Up.")
-
         # Timing
         self.control_rate = 20.0  # Hz
         self.control_period = 1.0 / self.control_rate
@@ -120,46 +122,23 @@ class LAUVControl(Node):
         self.time = self.get_clock().now().nanoseconds / 1e9
         self.prev_time = self.time
 
-        self.get_logger().info("LAUV Cascade Controller Initialized.")
+        self.get_logger().info("LAUV Controller Node Initialized.")
 
     # --- callbacks ---
 
     def cmd_pose_callback(self, msg):
-        # Convert Quat to Euler
         r, p, y = self.euler_from_quaternion(
             msg.pose.orientation.x,
             msg.pose.orientation.y,
             msg.pose.orientation.z,
             msg.pose.orientation.w,
         )
-
-        # Transform World Position Ref to Body Frame Ref
-        # (This calculates the error in the body frame immediately)
-        j, j11, j22 = self.eulerang(
-            self.eta_actual[3, 0], self.eta_actual[4, 0], self.eta_actual[5, 0]
-        )
-
-        if j is None:
-            return  # Singularity check
-
-        pos_ref_world = np.array(
-            [[msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]]
-        ).T
-
-        # We really only care about X (Surge) and Z (Depth) in body frame relative error
-        # But commonly, Z is treated in world frame (depth is absolute),
-        # while X/Y are relative to the vehicle heading.
-
-        # CRITICAL LAUV STRATEGY:
-        # We don't transform desired Position to Body. We calculate World Error, then transform Error to Body.
-        # So here we just store World Desired.
         self.eta_desired[0, 0] = msg.pose.position.x
         self.eta_desired[1, 0] = msg.pose.position.y
         self.eta_desired[2, 0] = msg.pose.position.z
         self.eta_desired[3, 0] = r
         self.eta_desired[4, 0] = p
         self.eta_desired[5, 0] = y
-
         self.ref_trajectory_received = True
 
     def odom_callback(self, msg):
@@ -169,7 +148,6 @@ class LAUVControl(Node):
             msg.pose.pose.orientation.z,
             msg.pose.pose.orientation.w,
         )
-
         self.eta_actual[0, 0] = msg.pose.pose.position.x
         self.eta_actual[1, 0] = msg.pose.pose.position.y
         self.eta_actual[2, 0] = msg.pose.pose.position.z
@@ -183,16 +161,13 @@ class LAUVControl(Node):
         self.nu_actual[3, 0] = msg.twist.twist.angular.x
         self.nu_actual[4, 0] = msg.twist.twist.angular.y
         self.nu_actual[5, 0] = msg.twist.twist.angular.z
-
         self.odom_received = True
 
     # --- core logic ---
     def position_control(self):
         """
-        Outer Loop: Calculates desired velocities/rates based on position errors.
-        Special Logic for Underactuated LAUV.
+        Outer Loop: Calculates desired velocities based on position errors (6 DOF).
         """
-
         # Calculate Error in World Frame
         err_world = self.eta_desired[0:3] - self.eta_actual[0:3]
 
@@ -200,128 +175,114 @@ class LAUVControl(Node):
         _, R_body_to_world, _ = self.eulerang(
             self.eta_actual[3, 0], self.eta_actual[4, 0], self.eta_actual[5, 0]
         )
-
         if R_body_to_world is None:
             return
 
         R_world_to_body = np.transpose(R_body_to_world)
         err_body = np.matmul(R_world_to_body, err_world)
 
-        # err_body[0] = Surge error (Body X)
-        # err_body[1] = Sway error (Body Y) -> IGNORED (Underactuated)
-        # err_body[2] = Heave error (Body Z) -> Used for Depth coupling
-
-        # --- Surge Control ---
+        # surge
         e_x, i_x, d_x = self.pid_x.calculate_error(err_body[0, 0], 0.0, self.time)
         self.nu_desired[0, 0] = self.pid_x.calculate_pid(e_x, i_x, d_x)
 
-        # --- Depth Control ---
+        # sway
+        e_y, i_y, d_y = self.pid_y.calculate_error(err_body[1, 0], 0.0, self.time)
+        self.nu_desired[1, 0] = self.pid_y.calculate_pid(e_y, i_y, d_y)
+
+        # heave
         e_z, i_z, d_z = self.pid_z.calculate_error(err_body[2, 0], 0.0, self.time)
+        self.nu_desired[2, 0] = self.pid_z.calculate_pid(e_z, i_z, d_z)
 
-        # The output of Z-PID is an OFFSET to the desired Pitch
-        pitch_offset = self.pid_z.calculate_pid(e_z, i_z, d_z)
-
-        # Total Desired Pitch = Trajectory Pitch + PID Correction
-
-        # NOTE: Inverting sign: If we are too shallow (+Error in NED logic? No, too shallow means Actual < Desired),
-        # Desired=10, Actual=0 -> Err=10. We need +Z motion.
-        # +Z motion requires Pitch Down (Negative Theta).
-        # So we subtract the pitch_offset.
-        total_theta_desired = self.eta_desired[4, 0] - pitch_offset
-
-        max_pitch = 45.0 * (np.pi / 180.0)  # limit pitch +/- 45 degrees
-        total_theta_desired = np.clip(total_theta_desired, -max_pitch, max_pitch)
-
-        # Pitch Error
-        e_theta, i_theta, d_theta = self.pid_theta.calculate_error(
-            total_theta_desired, self.eta_actual[4, 0], self.time
+        # roll
+        e_phi, i_phi, d_phi = self.pid_phi.calculate_error(
+            self.eta_desired[3, 0], self.eta_actual[3, 0], self.time
         )
+        self.nu_desired[3, 0] = self.pid_phi.calculate_pid(e_phi, i_phi, d_phi)
 
-        # Output is Desired Pitch Rate (q)
+        # pitch
+        e_theta, i_theta, d_theta = self.pid_theta.calculate_error(
+            self.eta_desired[4, 0], self.eta_actual[4, 0], self.time
+        )
         self.nu_desired[4, 0] = self.pid_theta.calculate_pid(e_theta, i_theta, d_theta)
 
-        # --- Heading Control (Horizontal Plane) ---
+        # yaw
         e_psi, i_psi, d_psi = self.pid_psi.calculate_error(
             self.eta_desired[5, 0], self.eta_actual[5, 0], self.time
         )
-
         self.nu_desired[5, 0] = self.pid_psi.calculate_pid(e_psi, i_psi, d_psi)
 
-        # --- Passive/Uncontrolled DOFs ---
-        self.nu_desired[1, 0] = 0.0  # Sway
-        self.nu_desired[2, 0] = 0.0  # Heave (Actuated via pitch, so direct ref is 0)
-        self.nu_desired[3, 0] = 0.0  # Roll
-
-        # Update message for debugging
+        # Debug Pub
         self.nu_msg.header.stamp = self.get_clock().now().to_msg()
         self.nu_msg.twist.linear.x = self.nu_desired[0, 0]
+        self.nu_msg.twist.linear.y = self.nu_desired[1, 0]
+        self.nu_msg.twist.linear.z = self.nu_desired[2, 0]
+        self.nu_msg.twist.angular.x = self.nu_desired[3, 0]
         self.nu_msg.twist.angular.y = self.nu_desired[4, 0]
         self.nu_msg.twist.angular.z = self.nu_desired[5, 0]
 
     def velocity_control(self):
         """
-        Inner Loop: Calculates Forces/Torques based on velocity errors.
+        Inner Loop: Calculates Forces/Torques based on velocity errors (6 DOF).
         """
-        # --- Surge Velocity (u) -> Force X ---
+        # surge
         e_u, i_u, d_u = self.pid_u.calculate_error(
             self.nu_desired[0, 0], self.nu_actual[0, 0], self.time
         )
-        acc_u = self.pid_u.calculate_pid(e_u, i_u, d_u)
+        self.acc[0, 0] = self.pid_u.calculate_pid(e_u, i_u, d_u)
 
-        # --- Pitch Rate (q) -> Torque Y ---
+        # sway
+        e_v, i_v, d_v = self.pid_v.calculate_error(
+            self.nu_desired[1, 0], self.nu_actual[1, 0], self.time
+        )
+        self.acc[1, 0] = self.pid_v.calculate_pid(e_v, i_v, d_v)
+
+        # heave
+        e_w, i_w, d_w = self.pid_w.calculate_error(
+            self.nu_desired[2, 0], self.nu_actual[2, 0], self.time
+        )
+        self.acc[2, 0] = self.pid_w.calculate_pid(e_w, i_w, d_w)
+
+        # roll
+        e_p, i_p, d_p = self.pid_p.calculate_error(
+            self.nu_desired[3, 0], self.nu_actual[3, 0], self.time
+        )
+        self.acc[3, 0] = self.pid_p.calculate_pid(e_p, i_p, d_p)
+
+        # pitch
         e_q, i_q, d_q = self.pid_q.calculate_error(
             self.nu_desired[4, 0], self.nu_actual[4, 0], self.time
         )
-        acc_q = self.pid_q.calculate_pid(e_q, i_q, d_q)
+        self.acc[4, 0] = self.pid_q.calculate_pid(e_q, i_q, d_q)
 
-        # --- Yaw Rate (r) -> Torque Z ---
+        # yaw
         e_r, i_r, d_r = self.pid_r.calculate_error(
             self.nu_desired[5, 0], self.nu_actual[5, 0], self.time
         )
-        acc_r = self.pid_r.calculate_pid(e_r, i_r, d_r)
-
-        # Build Acceleration Vector (assuming decoupled for simplicity or simple mass matrix)
-        self.acc[0, 0] = acc_u
-        self.acc[1, 0] = 0.0
-        self.acc[2, 0] = 0.0
-        self.acc[3, 0] = 0.0
-        self.acc[4, 0] = acc_q
-        self.acc[5, 0] = acc_r
+        self.acc[5, 0] = self.pid_r.calculate_pid(e_r, i_r, d_r)
 
         # Calculate Forces/Torques: Tau = M * Acc
-        # (Assuming M includes added mass)
         tau_vec = np.matmul(self.m_rb, self.acc)
 
         self.tau.header.stamp = self.get_clock().now().to_msg()
         self.tau.wrench.force.x = tau_vec[0, 0]
-        self.tau.wrench.force.y = 0.0
-        self.tau.wrench.force.z = 0.0  # No vertical thruster
-        self.tau.wrench.torque.x = 0.0  # No roll actuation (usually)
+        self.tau.wrench.force.y = tau_vec[1, 0]
+        self.tau.wrench.force.z = tau_vec[2, 0]
+        self.tau.wrench.torque.x = tau_vec[3, 0]
         self.tau.wrench.torque.y = tau_vec[4, 0]
         self.tau.wrench.torque.z = tau_vec[5, 0]
 
     def control_callback(self):
         self.time = self.get_clock().now().nanoseconds / 1e9
-
-        # Safety check: if time delta is weird (first loop), skip
         if self.time - self.prev_time <= 0:
             self.prev_time = self.time
             return
 
-        # TODO: fix this when ref traject is implemented
-        # if self.odom_received and self.ref_trajectory_received:
+        # NOTE: add check for ref traject received if needed
         if self.odom_received:
             self.position_control()
             self.velocity_control()
-
-        # --- DEBUG ---
-        # print desired tau
-        self.get_logger().info(
-            f"Desired Tau: Force=({self.tau.wrench.force.x:.2f}, {self.tau.wrench.force.y:.2f}, {self.tau.wrench.force.z:.2f}), Torque=({self.tau.wrench.torque.x:.2f}, {self.tau.wrench.torque.y:.2f}, {self.tau.wrench.torque.z:.2f})"
-        )
-
-        # self.ref_vel_pub.publish(self.nu_msg)
-        self.torque_pub.publish(self.tau)
+            self.ref_vel_pub.publish(self.nu_msg)
+            self.torque_pub.publish(self.tau)
 
         self.prev_time = self.time
 
@@ -340,8 +301,14 @@ class LAUVControl(Node):
         self.pid_x.reconfig_param(
             self.config["k_p_x"], self.config["k_i_x"], self.config["k_d_x"]
         )
+        self.pid_y.reconfig_param(
+            self.config["k_p_y"], self.config["k_i_y"], self.config["k_d_y"]
+        )
         self.pid_z.reconfig_param(
             self.config["k_p_z"], self.config["k_i_z"], self.config["k_d_z"]
+        )
+        self.pid_phi.reconfig_param(
+            self.config["k_p_phi"], self.config["k_i_phi"], self.config["k_d_phi"]
         )
         self.pid_theta.reconfig_param(
             self.config["k_p_theta"], self.config["k_i_theta"], self.config["k_d_theta"]
@@ -353,6 +320,15 @@ class LAUVControl(Node):
         # Update Inner Loop
         self.pid_u.reconfig_param(
             self.config["k_p_u"], self.config["k_i_u"], self.config["k_d_u"]
+        )
+        self.pid_v.reconfig_param(
+            self.config["k_p_v"], self.config["k_i_v"], self.config["k_d_v"]
+        )
+        self.pid_w.reconfig_param(
+            self.config["k_p_w"], self.config["k_i_w"], self.config["k_d_w"]
+        )
+        self.pid_p.reconfig_param(
+            self.config["k_p_p"], self.config["k_i_p"], self.config["k_d_p"]
         )
         self.pid_q.reconfig_param(
             self.config["k_p_q"], self.config["k_i_q"], self.config["k_d_q"]
@@ -368,13 +344,21 @@ class LAUVControl(Node):
         return SetParametersResult(successful=True)
 
     def reset_control(self):
-        self.pid_x.reset_control()
-        self.pid_z.reset_control()
-        self.pid_theta.reset_control()
-        self.pid_psi.reset_control()
-        self.pid_u.reset_control()
-        self.pid_q.reset_control()
-        self.pid_r.reset_control()
+        for pid in [
+            self.pid_x,
+            self.pid_y,
+            self.pid_z,
+            self.pid_phi,
+            self.pid_theta,
+            self.pid_psi,
+            self.pid_u,
+            self.pid_v,
+            self.pid_w,
+            self.pid_p,
+            self.pid_q,
+            self.pid_r,
+        ]:
+            pid.reset_control()
 
     # --- utils ---
     def euler_from_quaternion(self, x, y, z, w):
@@ -398,7 +382,7 @@ class LAUVControl(Node):
         cpsi, spsi = math.cos(psi), math.sin(psi)
 
         if abs(cth) < 0.001:
-            return None, None, None  # Gimbal lock guard
+            return None, None, None
 
         # Rotation Matrix (Body to World)
         R = np.array(
