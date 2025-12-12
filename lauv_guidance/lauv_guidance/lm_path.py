@@ -142,9 +142,9 @@ def main(args=None):
     # --- Configuration ---
     start_x = 0.0
     start_y = 0.0
-    leg_length = 50.0  # Horizontal length
+    leg_length = 20.0  # Horizontal length
     spacing = 5.0  # Vertical step
-    num_legs = 6
+    num_legs = 2
 
     # --- Node Setup ---
     node = LawnMowerPathNode()

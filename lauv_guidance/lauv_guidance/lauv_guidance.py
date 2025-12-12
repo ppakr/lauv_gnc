@@ -4,7 +4,7 @@ import numpy as np
 import math
 import tf_transformations
 
-from geometry_msgs.msg import PoseStamped, Point
+from geometry_msgs.msg import PoseStamped, Point, TwistStamped
 from nav_msgs.msg import Odometry, Path
 
 
@@ -30,6 +30,8 @@ class LOSGuidance:
         # Outputs
         self.desired_heading = 0.0
         self.cross_track_error = 0.0
+        self.vel_x = 0.0
+        self.vel_y = 0.0
         self.target_position = np.zeros(3)
 
     def set_path(self, path_points):
@@ -93,9 +95,11 @@ class LOSGuidance:
         """
         Calculates the target position for the position controller.
         """
+        self.vel_x = (target_vel * math.cos(self.desired_heading)) * d_t
+        self.vel_y = (target_vel * math.sin(self.desired_heading)) * d_t
         # self.position is current auv position
-        x_des = self.position[0] + (target_vel * math.cos(self.desired_heading)) * d_t
-        y_des = self.position[1] + (target_vel * math.sin(self.desired_heading)) * d_t
+        x_des = self.position[0] + self.vel_x
+        y_des = self.position[1] + self.vel_y
         return x_des, y_des
 
 
@@ -131,7 +135,19 @@ class LOSGuidanceNode(Node):
         )
 
         self.ref_pub = self.create_publisher(
-            PoseStamped, "/lauv/ref_trajectory_filtered", 10
+            Odometry, "/lauv/ref_trajectory_filtered", 10
+        )
+
+        self.ref_goal_curr_pub = self.create_publisher(
+            PoseStamped, "/lauv/ref_goal_curr", 10
+        )
+
+        self.ref_goal_prev_pub = self.create_publisher(
+            PoseStamped, "/lauv/ref_goal_prev", 10
+        )
+
+        self.ref_vel_pub = self.create_publisher(
+            TwistStamped, "/lauv/ref_vel", 10
         )
 
         self.los_pub = self.create_publisher(Point, "/lauv/debug/los_point", 10)
@@ -164,12 +180,12 @@ class LOSGuidanceNode(Node):
         # Update tuning params dynamically (optional, but good practice)
         self.guidance.delta = self.get_parameter("lookahead_distance").value
         self.guidance.radius = self.get_parameter("acceptance_radius").value
-        target_vel = self.get_parameter("target_vel").value
+        self.target_vel = self.get_parameter("target_vel").value
         def_depth = self.get_parameter("default_depth").value
 
         # prinnt values
         self.get_logger().info(
-            f"LOSGuidance Params - Lookahead: {self.guidance.delta}, Acceptance Radius: {self.guidance.radius}, Virtual Target Dist: {target_vel}, Default Depth: {def_depth}",
+            f"LOSGuidance Params - Lookahead: {self.guidance.delta}, Acceptance Radius: {self.guidance.radius}, Virtual Target Dist: {self.target_vel}, Default Depth: {def_depth}",
             throttle_duration_sec=10.0,
         )
 
@@ -178,7 +194,7 @@ class LOSGuidanceNode(Node):
 
         if is_active:
             # Calculate Target Position for Surge
-            x_des, y_des = self.guidance.get_surge_target(target_vel, self.dt)
+            x_des, y_des = self.guidance.get_surge_target(self.target_vel, self.dt)
 
             # Handle Depth (if path has 0.0, use default)
             z_des = self.guidance.target_position[2]
@@ -188,6 +204,9 @@ class LOSGuidanceNode(Node):
             # Publish
             self.publish_command(x_des, y_des, z_des, self.guidance.desired_heading)
             self.publish_debug(x_des, y_des, z_des)
+            self.publish_goal_curr()
+            self.publish_goal_prev()
+            self.publish_ref_vel()
 
         elif self.guidance.path and not is_active:
             # Mission just finished or stopped
@@ -204,20 +223,22 @@ class LOSGuidanceNode(Node):
             )
 
     def publish_command(self, x, y, z, yaw):
-        msg = PoseStamped()
+        msg = Odometry()
         msg.header.stamp = self.get_clock().now().to_msg()
         # msg.header.frame_id = "map"
 
-        msg.pose.position.x = float(x)
-        msg.pose.position.y = float(y)
-        msg.pose.position.z = float(z)
+        msg.pose.pose.position.x = float(x)
+        msg.pose.pose.position.y = float(y)
+        msg.pose.pose.position.z = float(z)
 
         # Orientation (Yaw only, Pitch handled by Depth controller)
         q = tf_transformations.quaternion_from_euler(0, 0, yaw)
-        msg.pose.orientation.x = q[0]
-        msg.pose.orientation.y = q[1]
-        msg.pose.orientation.z = q[2]
-        msg.pose.orientation.w = q[3]
+        msg.pose.pose.orientation.x = q[0]
+        msg.pose.pose.orientation.y = q[1]
+        msg.pose.pose.orientation.z = q[2]
+        msg.pose.pose.orientation.w = q[3]
+
+        msg.twist.twist.linear.x = self.target_vel
 
         self.ref_pub.publish(msg)
 
@@ -227,6 +248,31 @@ class LOSGuidanceNode(Node):
         p.y = float(y)
         p.z = float(z)
         self.los_pub.publish(p)
+
+    def publish_goal_curr(self):
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        p_curr = self.guidance.path[self.guidance.current_idx]
+        msg.pose.position.x = float(p_curr[0])
+        msg.pose.position.y = float(p_curr[1])
+        msg.pose.position.z = float(p_curr[2])
+        self.ref_goal_curr_pub.publish(msg)
+
+    def publish_goal_prev(self):
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        p_prev = self.guidance.path[self.guidance.current_idx - 1]
+        msg.pose.position.x = float(p_prev[0])
+        msg.pose.position.y = float(p_prev[1])
+        msg.pose.position.z = float(p_prev[2])
+        self.ref_goal_prev_pub.publish(msg)
+
+    def publish_ref_vel(self):
+        msg = TwistStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.twist.linear.x = self.guidance.vel_x
+        msg.twist.linear.y = self.guidance.vel_y
+        self.ref_vel_pub.publish(msg)
 
 
 def main(args=None):
